@@ -8,7 +8,7 @@ import base64
 import re
 import json
 
-# WooCommerce API Config https://footballkitsdeals.com/wp-content/uploads/2025/07/RFS-washing-instruction.jpg
+# WooCommerce API Config 
 wcapi = API(
     url="***",
     consumer_key="***",
