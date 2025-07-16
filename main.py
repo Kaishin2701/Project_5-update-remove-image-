@@ -8,7 +8,7 @@ import base64
 import re
 import json
 
-# WooCommerce API Config 
+# WooCommerce API Config
 wcapi = API(
     url="***",
     consumer_key="***",
@@ -24,10 +24,10 @@ auto_run_flag = False
 current_batch_index = 0
 product_batches = []
 
-# Thread-safe log helper
 thread_safe_log = None  # Will be set after log_widget is created
 
 def set_thread_safe_log(log_widget):
+    """Set up a thread-safe logger for the Tkinter log widget."""
     import threading
     def _log(msg):
         if threading.current_thread() is threading.main_thread():
@@ -40,6 +40,7 @@ def set_thread_safe_log(log_widget):
     thread_safe_log = _log
 
 def check_image_url_exists(url):
+    """Check if an image URL exists (HTTP HEAD request)."""
     try:
         response = requests.head(url, timeout=5)
         return response.status_code == 200
@@ -47,6 +48,7 @@ def check_image_url_exists(url):
         return False
 
 def get_image_id_by_url(url):
+    """Get the image ID from the media library by its URL."""
     filename = url.split("/")[-1]
     api_url = "***"
     auth = (wcapi.consumer_key, wcapi.consumer_secret)
@@ -72,6 +74,7 @@ def get_image_id_by_url(url):
     return None
 
 def get_image_id_by_title(title, wcapi=None):
+    """Get the image ID from the media library by its title, slug, or filename."""
     import requests
     import re
     WC_URL = wcapi.url if wcapi else "***"
@@ -79,7 +82,6 @@ def get_image_id_by_title(title, wcapi=None):
     per_page = 100
     max_pages = 10
     title_norm = re.sub(r'\W+', '', title).strip().lower()
-    found = False
     for page in range(1, max_pages + 1):
         response = requests.get(api_url, params={"search": title, "per_page": per_page, "page": page})
         if response.status_code == 200:
@@ -92,7 +94,6 @@ def get_image_id_by_title(title, wcapi=None):
                 t_norm = re.sub(r'\W+', '', t).strip().lower()
                 slug_norm = re.sub(r'\W+', '', slug).strip().lower()
                 filename_norm = re.sub(r'\W+', '', filename).strip().lower()
-                print(f"[DEBUG] Found: title='{t}', slug='{slug}', filename='{filename}' (ID: {item.get('id')})")
                 if t_norm == title_norm or slug_norm == title_norm or filename_norm == title_norm:
                     image_id = item.get("id")
                     print(f"[LOG] Found image ID {image_id} for title: {title}")
@@ -100,12 +101,13 @@ def get_image_id_by_title(title, wcapi=None):
         else:
             print(f"[ERROR] API error: {response.status_code}")
             break
-        if found or len(items) < per_page:
+        if len(items) < per_page:
             break
     print(f"[LOG] No image ID found for title: {title}")
     return None
 
 def get_all_product_ids():
+    """Fetch all product IDs from WooCommerce."""
     product_ids = []
     page = 1
     while True:
@@ -123,6 +125,7 @@ def get_all_product_ids():
     return product_ids
 
 def get_all_product_ids_with_order(wcapi, order="oldest"):
+    """Fetch all product IDs with a specific order (oldest/newest)."""
     product_ids = []
     page = 1
     while True:
@@ -140,20 +143,20 @@ def get_all_product_ids_with_order(wcapi, order="oldest"):
     return product_ids
 
 def batch_product_ids(product_ids, batch_size):
+    """Yield batches of product IDs of a given size."""
     for i in range(0, len(product_ids), batch_size):
         yield product_ids[i:i+batch_size]
 
 def update_product_gallery(product_id, new_image_urls, replace_limit, log_widget):
+    """Update the product gallery by adding new images (by URL) to the product."""
     global log_counter
     try:
         product_raw = wcapi.get(f"products/{product_id}")
         product = json.loads(product_raw.content.decode('utf-8-sig'))
         product_title = product.get("name", f"ID {product_id}")
         current_images = product.get("images", [])
-
-        # ALWAYS KEEP OLD IMAGES - only add new images
+        # Always keep old images - only add new images
         final_images = current_images.copy()
-
         # Add new images, check for duplicates
         for url in new_image_urls:
             if not check_image_url_exists(url):
@@ -174,37 +177,30 @@ def update_product_gallery(product_id, new_image_urls, replace_limit, log_widget
             else:
                 thread_safe_log(f"{log_counter}. Image not found in Media Library: {url}\n")
             log_counter += 1
-
         data = {"images": final_images}
         response = wcapi.put(f"products/{product_id}", data)
-
         if response.status_code == 200:
             thread_safe_log(f"{log_counter}. Updated {product_title} - Total images: {len(final_images)}\n")
         else:
             thread_safe_log(f"{log_counter}. Failed {product_title} (Status {response.status_code})\n")
-
         log_counter += 1
-
     except Exception as e:
         thread_safe_log(f"{log_counter}. Error updating {product_id}: {e}\n")
         log_counter += 1
 
 def update_product_gallery_by_id(product_id, image_id, mode, position, position_index, wcapi, log_widget):
+    """Add or remove an image (by ID) to/from a product's gallery at a specific position."""
     try:
-        # Get product info
         product_raw = wcapi.get(f"products/{product_id}")
         product = json.loads(product_raw.content.decode('utf-8-sig'))
         gallery = product.get("images", [])
-        # Get current IDs list
         gallery_ids = [img.get("id") for img in gallery if img.get("id")]
-        # Remove mode
         if mode == "remove":
             if image_id in gallery_ids:
                 gallery_ids = [i for i in gallery_ids if i != image_id]
                 thread_safe_log(f"Product {product_id}: Removed image ID {image_id} from gallery.\n")
             else:
                 thread_safe_log(f"Product {product_id}: Image ID {image_id} not in gallery.\n")
-        # Add mode
         elif mode == "add":
             if image_id in gallery_ids:
                 thread_safe_log(f"Product {product_id}: Image ID {image_id} already in gallery.\n")
@@ -222,7 +218,6 @@ def update_product_gallery_by_id(product_id, image_id, mode, position, position_
                     except Exception:
                         gallery_ids = gallery_ids + [image_id]
                 thread_safe_log(f"Product {product_id}: Added image ID {image_id} to gallery at {position}.\n")
-        # Update gallery
         new_gallery = [{"id": i} for i in gallery_ids]
         data = {"images": new_gallery}
         response = wcapi.put(f"products/{product_id}", data)
@@ -235,61 +230,8 @@ def update_product_gallery_by_id(product_id, image_id, mode, position, position_
         thread_safe_log(f"Product {product_id}: Error: {e}\n")
         log_widget.see(tk.END)
 
-def batch_update(new_image_urls, replace_limit, log_widget, confirm_button, stop_button):
-    global stop_requested
-    stop_requested = False
-
-    thread_safe_log("Fetching all product IDs...\n")
-    product_ids = get_all_product_ids()
-    thread_safe_log(f"Found {len(product_ids)} products.\n")
-
-    # Handle the number of products to update
-    try:
-        if replace_limit.upper() == "ALL":
-            products_to_update = product_ids
-            thread_safe_log(f"Will update ALL {len(product_ids)} products.\n")
-        else:
-            limit = int(replace_limit)
-            if limit <= 0:
-                thread_safe_log("Invalid number. Please enter a positive number or 'ALL'.\n")
-                confirm_button.config(state=tk.NORMAL)
-                stop_button.config(state=tk.DISABLED)
-                return
-            products_to_update = product_ids[:limit]
-            thread_safe_log(f"Will update first {limit} products.\n")
-    except ValueError:
-        thread_safe_log("Invalid number. Please enter a positive number or 'ALL'.\n")
-        confirm_button.config(state=tk.NORMAL)
-        stop_button.config(state=tk.DISABLED)
-        return
-
-    for product_id in products_to_update:
-        if stop_requested:
-            thread_safe_log("Process stopped by user.\n")
-            log_widget.see(tk.END)
-            break
-        update_product_gallery(product_id, new_image_urls, replace_limit, log_widget)
-        time.sleep(1)
-
-    confirm_button.config(state=tk.NORMAL)
-    stop_button.config(state=tk.DISABLED)
-
-def start_process(image_urls_entry, replace_limit_entry, log_widget, confirm_button, stop_button):
-    confirm_button.config(state=tk.DISABLED)
-    stop_button.config(state=tk.NORMAL)
-
-    new_image_urls = [url.strip() for url in image_urls_entry.get().split(",") if url.strip()]
-    replace_limit = replace_limit_entry.get().strip() or "ALL"
-
-    threading.Thread(target=batch_update, args=(new_image_urls, replace_limit, log_widget, confirm_button, stop_button)).start()
-
-def stop_process(confirm_button, stop_button):
-    global stop_requested
-    stop_requested = True
-    confirm_button.config(state=tk.NORMAL)
-    stop_button.config(state=tk.DISABLED)
-
 def run_once(batch_size_entry, image_title_entry, mode_var, position_var, position_index_entry, order_var, log_widget):
+    """Run a single batch operation for a given image and batch size."""
     try:
         batch_size = int(batch_size_entry.get())
         image_title = image_title_entry.get().strip()
@@ -299,19 +241,16 @@ def run_once(batch_size_entry, image_title_entry, mode_var, position_var, positi
         order = order_var.get()
         thread_safe_log(f"--- Run Once: Batch size {batch_size}, Image '{image_title}', Mode {mode}, Position {position}, Order {order} ---\n")
         log_widget.see(tk.END)
-        # Get product list
         product_ids = get_all_product_ids_with_order(wcapi, order)
         if not product_ids:
             thread_safe_log("No products found!\n")
             log_widget.see(tk.END)
             return
-        # Split into batches
         batches = list(batch_product_ids(product_ids, batch_size))
         if not batches:
             thread_safe_log("No batch to process!\n")
             log_widget.see(tk.END)
             return
-        # Find image_id only once
         image_id = get_image_id_by_title(image_title, wcapi)
         if not image_id:
             thread_safe_log(f"Image with title '{image_title}' not found. Batch skipped.\n")
@@ -319,7 +258,6 @@ def run_once(batch_size_entry, image_title_entry, mode_var, position_var, positi
             return
         thread_safe_log(f"[LOG] Found image ID {image_id} for title: {image_title}\n")
         log_widget.see(tk.END)
-        # Process the first batch
         for product_id in batches[0]:
             update_product_gallery_by_id(product_id, image_id, mode, position if position != "index" else "index", position_index, wcapi, log_widget)
         thread_safe_log(f"--- Batch done ({len(batches[0])} products) ---\n")
@@ -329,6 +267,7 @@ def run_once(batch_size_entry, image_title_entry, mode_var, position_var, positi
         log_widget.see(tk.END)
 
 def auto_run_batches(batch_size_entry, image_title_entry, mode_var, position_var, position_index_entry, order_var, log_widget, auto_run_btn, stop_btn):
+    """Automatically run batch operations for all batches, with a delay between each batch."""
     print("[DEBUG] auto_run_batches called")
     global auto_run_flag, current_batch_index, product_batches
     auto_run_flag = True
@@ -348,7 +287,6 @@ def auto_run_batches(batch_size_entry, image_title_entry, mode_var, position_var
             product_batches = list(batch_product_ids(product_ids, batch_size))
             print(f"[DEBUG] Number of batches: {len(product_batches)}")
             current_batch_index = 0
-        # Find image_id only once for the entire Auto Run
         image_id = get_image_id_by_title(image_title, wcapi)
         print(f"[DEBUG] image_id found: {image_id}")
         if not image_id:
@@ -394,6 +332,7 @@ def auto_run_batches(batch_size_entry, image_title_entry, mode_var, position_var
         stop_btn.config(state=tk.DISABLED)
 
 def stop_auto_run(auto_run_btn, stop_btn, log_widget):
+    """Stop the auto-run batch process."""
     global auto_run_flag
     auto_run_flag = False
     auto_run_btn.config(state=tk.NORMAL)
@@ -402,6 +341,7 @@ def stop_auto_run(auto_run_btn, stop_btn, log_widget):
     log_widget.see(tk.END)
 
 def reset_progress(log_widget):
+    """Reset the progress of the auto-run batch process."""
     global current_batch_index, product_batches, auto_run_flag
     current_batch_index = 0
     product_batches = []
@@ -411,27 +351,20 @@ def reset_progress(log_widget):
 
 # --- Main GUI ---
 def create_gui():
+    """Create the main Tkinter GUI for the batch image inserter tool."""
     root = tk.Tk()
     root.title("WooCommerce Batch Image Inserter")
-
-    # Batch size
     tk.Label(root, text="Batch Size:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
     batch_size_entry = tk.Entry(root, width=10)
     batch_size_entry.insert(0, "10")
     batch_size_entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-
-    # Image Title
     tk.Label(root, text="Image Title:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
     image_title_entry = tk.Entry(root, width=40)
     image_title_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
-
-    # Mode (Add/Remove)
     tk.Label(root, text="Mode:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
     mode_var = tk.StringVar(value="add")
     tk.Radiobutton(root, text="Add", variable=mode_var, value="add").grid(row=2, column=1, sticky="w")
     tk.Radiobutton(root, text="Remove", variable=mode_var, value="remove").grid(row=2, column=1, sticky="e")
-
-    # Insert Position
     tk.Label(root, text="Insert Position:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
     position_var = tk.StringVar(value="end")
     tk.Radiobutton(root, text="Start", variable=position_var, value="start").grid(row=3, column=1, sticky="w")
@@ -439,14 +372,10 @@ def create_gui():
     tk.Label(root, text="or Index:").grid(row=3, column=2, sticky="e")
     position_index_entry = tk.Entry(root, width=5)
     position_index_entry.grid(row=3, column=3, sticky="w")
-
-    # Product Order
     tk.Label(root, text="Product Order:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
     order_var = tk.StringVar(value="oldest")
     tk.Radiobutton(root, text="Oldest to Newest", variable=order_var, value="oldest").grid(row=4, column=1, sticky="w")
     tk.Radiobutton(root, text="Newest to Oldest", variable=order_var, value="newest").grid(row=4, column=1)
-
-    # Buttons
     run_once_btn = tk.Button(root, text="Run Once", command=lambda: run_once(batch_size_entry, image_title_entry, mode_var, position_var, position_index_entry, order_var, log_widget))
     run_once_btn.grid(row=5, column=0, padx=5, pady=10)
     auto_run_btn = tk.Button(root, text="Start Auto Run", command=lambda: threading.Thread(target=auto_run_batches, args=(batch_size_entry, image_title_entry, mode_var, position_var, position_index_entry, order_var, log_widget, auto_run_btn, stop_btn)).start())
@@ -455,13 +384,10 @@ def create_gui():
     stop_btn.grid(row=5, column=2, padx=5, pady=10)
     reset_btn = tk.Button(root, text="Reset Progress", command=lambda: reset_progress(log_widget))
     reset_btn.grid(row=5, column=3, padx=5, pady=10)
-
-    # Log
     tk.Label(root, text="Log:").grid(row=6, column=0, sticky="nw", padx=5)
     log_widget = scrolledtext.ScrolledText(root, width=80, height=15)
     log_widget.grid(row=6, column=1, columnspan=3, padx=5, pady=5)
     set_thread_safe_log(log_widget)
-
     root.mainloop()
 
 if __name__ == "__main__":
